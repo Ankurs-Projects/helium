@@ -166,7 +166,7 @@
 +#include "base/time/time.h"
 +#include "base/values.h"
 +#include "chrome/browser/profiles/profile.h"
-+#include "components/helium_services/pref_names.h"
++#include "components/helium_services/gods_eye_pref_names.h"
 +#include "components/prefs/pref_service.h"
 +#include "components/prefs/scoped_user_pref_update.h"
 +#include "content/public/browser/web_ui.h"

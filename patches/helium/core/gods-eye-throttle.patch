@@ -90,7 +90,7 @@
 +#include "base/time/time.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/common/webui_url_constants.h"
-+#include "components/helium_services/pref_names.h"
++#include "components/helium_services/gods_eye_pref_names.h"
 +#include "components/prefs/pref_service.h"
 +#include "content/public/browser/browser_context.h"
 +#include "content/public/browser/navigation_handle.h"

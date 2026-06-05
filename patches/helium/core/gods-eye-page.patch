@@ -1,35 +1,45 @@
 --- a/chrome/common/webui_url_constants.h
 +++ b/chrome/common/webui_url_constants.h
-@@ -1,2 +1,4 @@
+@@ -490,6 +490,8 @@
+ inline constexpr char kChromeUIProfilePickerStartupQuery[] = "startup";
+ inline constexpr char kChromeUIProfilePickerGlicQuery[] = "glic";
+ inline constexpr char kChromeUIProfilePickerUrl[] = "chrome://profile-picker/";
 +inline constexpr char kHeliumGodsEyeHost[] = "godseye";
 +inline constexpr char kHeliumGodsEyeURL[] = "chrome://godseye";
  inline constexpr char kHeliumSetupHost[] = "setup";
  inline constexpr char kHeliumSetupURL[] = "chrome://setup";
+ inline constexpr char kChromeUIHistorySyncOptinHost[] = "history-sync-optin";
 --- a/chrome/common/webui_url_constants.cc
 +++ b/chrome/common/webui_url_constants.cc
-@@ -1,4 +1,5 @@
+@@ -168,6 +168,7 @@
        kChromeUIPrefsInternalsHost,
        kChromeUIProfileInternalsHost,
        content::kChromeUIQuotaInternalsHost,
 +      kHeliumGodsEyeHost,
        kHeliumSetupHost,
+ #if !BUILDFLAG(IS_ANDROID)
+       kChromeUIWebUIToolbarHost,
 --- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
 +++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
-@@ -1,4 +1,5 @@
+@@ -44,6 +44,7 @@
  #include "chrome/browser/ui/webui/net_internals/net_internals_ui.h"
  #include "chrome/browser/ui/webui/ntp_tiles_internals_ui.h"
  #include "chrome/browser/ui/webui/omnibox/omnibox_ui.h"
 +#include "chrome/browser/ui/webui/gods_eye/gods_eye_ui.h"
  #include "chrome/browser/ui/webui/onboarding/onboarding_page_ui.h"
---- a/chrome/browser/ui/webui/chrome_web_ui_configs.cc
-+++ b/chrome/browser/ui/webui/chrome_web_ui_configs.cc
-@@ -1,2 +1,3 @@
+ #include "chrome/browser/ui/webui/policy/policy_ui.h"
+ #include "chrome/browser/ui/webui/predictors/predictors_ui.h"
+@@ -449,6 +450,7 @@
+   map.AddWebUIConfig(std::make_unique<DefaultBrowserModalUIConfig>());
+   map.AddWebUIConfig(std::make_unique<ManagedUserProfileNoticeUIConfig>());
    map.AddWebUIConfig(std::make_unique<IntroUIConfig>());
 +  map.AddWebUIConfig(std::make_unique<HeliumGodsEyePageConfig>());
    map.AddWebUIConfig(std::make_unique<HeliumOnboardingPageConfig>());
+   map.AddWebUIConfig(std::make_unique<ProfileCustomizationUIConfig>());
+   map.AddWebUIConfig(std::make_unique<ProfilePickerUIConfig>());
 --- a/chrome/browser/ui/BUILD.gn
 +++ b/chrome/browser/ui/BUILD.gn
-@@ -1,4 +1,8 @@
+@@ -164,6 +164,10 @@
      "webui/net_internals/net_internals_ui.h",
      "webui/ntp_tiles_internals_ui.cc",
      "webui/ntp_tiles_internals_ui.h",
@@ -37,7 +47,9 @@
 +    "webui/gods_eye/gods_eye_handler.h",
 +    "webui/gods_eye/gods_eye_ui.cc",
 +    "webui/gods_eye/gods_eye_ui.h",
-     "webui/omnibox/omnibox_page_handler.cc",
+     "webui/onboarding/onboarding_handler.cc",
+     "webui/onboarding/onboarding_handler.h",
+     "webui/onboarding/onboarding_page_ui.cc",
 --- a/chrome/browser/ui/webui/gods_eye/gods_eye_ui.h
 +++ b/chrome/browser/ui/webui/gods_eye/gods_eye_ui.h
 @@ -0,0 +1,31 @@

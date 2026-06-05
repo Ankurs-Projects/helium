@@ -1,6 +1,6 @@
 --- a/chrome/app/settings_strings.grdp
 +++ b/chrome/app/settings_strings.grdp
-@@ -1,4 +1,10 @@
+@@ -221,6 +221,12 @@
    <message name="IDS_SETTINGS_APPEARANCE" desc="Name of the settings page which displays appearance preferences.">
      Appearance
    </message>
@@ -11,18 +11,23 @@
 +    Block distracting websites and keywords
 +  </message>
    <message name="IDS_SETTINGS_APPEARANCE_AND_BEHAVIOR" desc="Name of the settings page which displays appearance and behavior preferences.">
+     Appearance and behavior
+   </message>
 --- a/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
 +++ b/chrome/browser/ui/webui/settings/settings_localized_strings_provider.cc
-@@ -1,3 +1,5 @@
+@@ -504,6 +504,8 @@
+                           Profile* profile) {
    static constexpr webui::LocalizedString kLocalizedStrings[] = {
        {"appearancePageTitle", IDS_SETTINGS_APPEARANCE},
 +      {"godsEyeTitle", IDS_SETTINGS_GODS_EYE},
 +      {"godsEyeDescription", IDS_SETTINGS_GODS_EYE_DESCRIPTION},
        {"appearanceBehaviorPageTitle", IDS_SETTINGS_APPEARANCE_AND_BEHAVIOR},
+       {"behaviorPageTitle", IDS_SETTINGS_BEHAVIOR},
+       {"customWebAddress", IDS_SETTINGS_CUSTOM_WEB_ADDRESS},
 --- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
 +++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-@@ -1,4 +1,10 @@
-           $i18n{basicPageTitle}
+@@ -64,6 +64,12 @@
+           $i18n{appearanceBehaviorPageTitle}
            <cr-ripple></cr-ripple>
          </a>
 +        <a role="menuitem" id="godsEye" class="cr-nav-menu-item"
@@ -31,12 +36,19 @@
 +          $i18n{godsEyeTitle}
 +          <cr-ripple></cr-ripple>
 +        </a>
-         <a role="menuitem" id="people" href="/people"
+         <a role="menuitem" href="/privacy"
+             hidden="[[!pageVisibility_.privacy]]"
+             class="cr-nav-menu-item">
 --- a/chrome/browser/resources/settings/settings_menu/settings_menu.ts
 +++ b/chrome/browser/resources/settings/settings_menu/settings_menu.ts
-@@ -1 +1,5 @@
+@@ -98,6 +98,10 @@
+     return showYourSavedInfo || showAutofill;
+   }
+ 
 +  private onGodsEyeClick_() {
 +    window.open('chrome://godseye', '_blank');
 +  }
 +
-   override currentRouteChanged(route: Route) {
+   override currentRouteChanged(newRoute: Route) {
+     // Focus the initially selected path.
+     const anchors = this.shadowRoot!.querySelectorAll('a');

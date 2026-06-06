@@ -174,7 +174,7 @@
 +  if (base::StartsWith(host, "www.", base::CompareCase::INSENSITIVE_ASCII))
 +    host = host.substr(4);
 +
-+  const base::Value::List& domains =
++  const base::ListValue& domains =
 +      pref_service_->GetList(prefs::kGodsEyeBlockedDomains);
 +
 +  for (const auto& entry : domains) {
@@ -194,7 +194,7 @@
 +
 +std::string GodsEyeNavigationThrottle::MatchesKeyword(const GURL& url) const {
 +  std::string url_lower = base::ToLowerASCII(url.spec());
-+  const base::Value::List& keywords =
++  const base::ListValue& keywords =
 +      pref_service_->GetList(prefs::kGodsEyeBlockedKeywords);
 +
 +  for (const auto& entry : keywords) {

@@ -86,13 +86,15 @@
 +#endif  // CHROME_BROWSER_UI_WEBUI_GODS_EYE_GODS_EYE_UI_H_
 --- a/chrome/browser/ui/webui/gods_eye/gods_eye_ui.cc
 +++ b/chrome/browser/ui/webui/gods_eye/gods_eye_ui.cc
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,335 @@
 +// Copyright 2025 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
 +
 +#include "chrome/browser/ui/webui/gods_eye/gods_eye_ui.h"
 +
++#include "base/functional/bind.h"
++#include "base/memory/ref_counted_memory.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/ui/webui/gods_eye/gods_eye_handler.h"
 +#include "chrome/common/webui_url_constants.h"
@@ -100,250 +102,11 @@
 +#include "content/public/browser/web_ui.h"
 +#include "content/public/browser/web_ui_controller.h"
 +#include "content/public/browser/web_ui_data_source.h"
-+#include "net/base/features.h"
-+#include "ui/webui/webui_util.h"
++#include "services/network/public/mojom/content_security_policy.mojom.h"
 +
-+HeliumGodsEyePage::HeliumGodsEyePage(content::WebUI* web_ui)
-+    : WebUIController(web_ui) {
-+  content::BrowserContext* browser_context =
-+      web_ui->GetWebContents()->GetBrowserContext();
-+  Profile* profile = Profile::FromBrowserContext(browser_context);
-+  content::WebUIDataSource* source =
-+      content::WebUIDataSource::CreateAndAdd(
-+          profile, chrome::kHeliumGodsEyeHost);
++namespace {
 +
-+  source->SetDefaultResource(IDR_HELIUM_GODS_EYE_HTML);
-+  source->DisableTrustedTypesCSP();
-+  source->OverrideContentSecurityPolicy(
-+      network::mojom::CSPDirectiveName::ScriptSrc,
-+      "script-src 'self' 'unsafe-inline';");
-+  source->OverrideContentSecurityPolicy(
-+      network::mojom::CSPDirectiveName::ConnectSrc,
-+      "connect-src 'self' https://timeapi.io;");
-+
-+  web_ui->AddMessageHandler(
-+      std::make_unique<GodsEyeHandler>(browser_context));
-+}
-+
-+HeliumGodsEyePage::~HeliumGodsEyePage() = default;
---- a/chrome/browser/ui/webui/gods_eye/gods_eye_handler.h
-+++ b/chrome/browser/ui/webui/gods_eye/gods_eye_handler.h
-@@ -0,0 +1,36 @@
-+// Copyright 2025 The Helium Authors
-+// You can use, redistribute, and/or modify this source code under
-+// the terms of the GPL-3.0 license that can be found in the LICENSE file.
-+
-+#ifndef CHROME_BROWSER_UI_WEBUI_GODS_EYE_GODS_EYE_HANDLER_H_
-+#define CHROME_BROWSER_UI_WEBUI_GODS_EYE_GODS_EYE_HANDLER_H_
-+
-+#include "base/memory/raw_ptr.h"
-+#include "base/values.h"
-+#include "components/prefs/pref_service.h"
-+#include "content/public/browser/browser_context.h"
-+#include "content/public/browser/web_ui_message_handler.h"
-+
-+class GodsEyeHandler : public content::WebUIMessageHandler {
-+ public:
-+  explicit GodsEyeHandler(content::BrowserContext* browser_context);
-+  ~GodsEyeHandler() override;
-+
-+  GodsEyeHandler(const GodsEyeHandler&) = delete;
-+  GodsEyeHandler& operator=(const GodsEyeHandler&) = delete;
-+
-+  void RegisterMessages() override;
-+
-+ private:
-+  void HandleGetGodsEyeData(const base::Value::List& args);
-+  void HandleSaveGodsEyeData(const base::Value::List& args);
-+  void HandleAddDomain(const base::Value::List& args);
-+  void HandleAddKeyword(const base::Value::List& args);
-+  void HandleRemoveDomain(const base::Value::List& args);
-+  void HandleRemoveKeyword(const base::Value::List& args);
-+
-+  raw_ptr<content::BrowserContext> browser_context_;
-+  raw_ptr<PrefService> pref_service_;
-+};
-+
-+#endif  // CHROME_BROWSER_UI_WEBUI_GODS_EYE_GODS_EYE_HANDLER_H_
---- a/chrome/browser/ui/webui/gods_eye/gods_eye_handler.cc
-+++ b/chrome/browser/ui/webui/gods_eye/gods_eye_handler.cc
-@@ -0,0 +1,173 @@
-+// Copyright 2025 The Helium Authors
-+// You can use, redistribute, and/or modify this source code under
-+// the terms of the GPL-3.0 license that can be found in the LICENSE file.
-+
-+#include "chrome/browser/ui/webui/gods_eye/gods_eye_handler.h"
-+
-+#include "base/functional/bind.h"
-+#include "base/time/time.h"
-+#include "base/values.h"
-+#include "chrome/browser/profiles/profile.h"
-+#include "components/helium_services/gods_eye_pref_names.h"
-+#include "components/prefs/pref_service.h"
-+#include "components/prefs/scoped_user_pref_update.h"
-+#include "content/public/browser/web_ui.h"
-+
-+GodsEyeHandler::GodsEyeHandler(content::BrowserContext* browser_context)
-+    : browser_context_(browser_context),
-+      pref_service_(
-+          Profile::FromBrowserContext(browser_context)->GetPrefs()) {}
-+
-+GodsEyeHandler::~GodsEyeHandler() = default;
-+
-+void GodsEyeHandler::RegisterMessages() {
-+  web_ui()->RegisterMessageCallback(
-+      "getGodsEyeData",
-+      base::BindRepeating(&GodsEyeHandler::HandleGetGodsEyeData,
-+                          base::Unretained(this)));
-+  web_ui()->RegisterMessageCallback(
-+      "saveGodsEyeData",
-+      base::BindRepeating(&GodsEyeHandler::HandleSaveGodsEyeData,
-+                          base::Unretained(this)));
-+  web_ui()->RegisterMessageCallback(
-+      "addDomain",
-+      base::BindRepeating(&GodsEyeHandler::HandleAddDomain,
-+                          base::Unretained(this)));
-+  web_ui()->RegisterMessageCallback(
-+      "addKeyword",
-+      base::BindRepeating(&GodsEyeHandler::HandleAddKeyword,
-+                          base::Unretained(this)));
-+  web_ui()->RegisterMessageCallback(
-+      "removeDomain",
-+      base::BindRepeating(&GodsEyeHandler::HandleRemoveDomain,
-+                          base::Unretained(this)));
-+  web_ui()->RegisterMessageCallback(
-+      "removeKeyword",
-+      base::BindRepeating(&GodsEyeHandler::HandleRemoveKeyword,
-+                          base::Unretained(this)));
-+}
-+
-+void GodsEyeHandler::HandleGetGodsEyeData(const base::Value::List& args) {
-+  AllowJavascript();
-+  const std::string& callback_id = args[0].GetString();
-+
-+  const base::Value::List& domains =
-+      pref_service_->GetList(prefs::kGodsEyeBlockedDomains);
-+  const base::Value::List& keywords =
-+      pref_service_->GetList(prefs::kGodsEyeBlockedKeywords);
-+  double expiry = pref_service_->GetDouble(prefs::kGodsEyeExpiryTimestamp);
-+  bool active = pref_service_->GetBoolean(prefs::kGodsEyeActive);
-+
-+  if (active && expiry > 0.0) {
-+    double now = base::Time::Now().InSecondsFSinceUnixEpoch();
-+    if (now >= expiry) {
-+      pref_service_->SetBoolean(prefs::kGodsEyeActive, false);
-+      active = false;
-+    }
-+  }
-+
-+  base::Value::Dict result;
-+  result.Set("domains", domains.Clone());
-+  result.Set("keywords", keywords.Clone());
-+  result.Set("expiryTimestamp", expiry);
-+  result.Set("active", active);
-+
-+  ResolveJavascriptCallback(base::Value(callback_id),
-+                             base::Value(std::move(result)));
-+}
-+
-+void GodsEyeHandler::HandleSaveGodsEyeData(const base::Value::List& args) {
-+  AllowJavascript();
-+  const std::string& callback_id = args[0].GetString();
-+
-+  if (args.size() < 4) {
-+    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
-+    return;
-+  }
-+
-+  const base::Value::List* domains = args[1].GetIfList();
-+  const base::Value::List* keywords = args[2].GetIfList();
-+  double expiry = args[3].GetDouble();
-+
-+  if (!domains || !keywords || expiry <= 0.0) {
-+    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
-+    return;
-+  }
-+
-+  pref_service_->SetList(prefs::kGodsEyeBlockedDomains, domains->Clone());
-+  pref_service_->SetList(prefs::kGodsEyeBlockedKeywords, keywords->Clone());
-+  pref_service_->SetDouble(prefs::kGodsEyeExpiryTimestamp, expiry);
-+  pref_service_->SetBoolean(prefs::kGodsEyeActive, true);
-+
-+  ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
-+}
-+
-+void GodsEyeHandler::HandleAddDomain(const base::Value::List& args) {
-+  AllowJavascript();
-+  const std::string& callback_id = args[0].GetString();
-+  if (args.size() < 2 || !args[1].is_string()) {
-+    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
-+    return;
-+  }
-+  const std::string& domain = args[1].GetString();
-+  if (domain.empty()) {
-+    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
-+    return;
-+  }
-+  ScopedListPrefUpdate update(pref_service_, prefs::kGodsEyeBlockedDomains);
-+  for (const auto& entry : *update) {
-+    if (entry.is_string() && entry.GetString() == domain) {
-+      ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
-+      return;
-+    }
-+  }
-+  update->Append(domain);
-+  ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
-+}
-+
-+void GodsEyeHandler::HandleAddKeyword(const base::Value::List& args) {
-+  AllowJavascript();
-+  const std::string& callback_id = args[0].GetString();
-+  if (args.size() < 2 || !args[1].is_string()) {
-+    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
-+    return;
-+  }
-+  const std::string& keyword = args[1].GetString();
-+  if (keyword.empty()) {
-+    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
-+    return;
-+  }
-+  ScopedListPrefUpdate update(pref_service_, prefs::kGodsEyeBlockedKeywords);
-+  for (const auto& entry : *update) {
-+    if (entry.is_string() && entry.GetString() == keyword) {
-+      ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
-+      return;
-+    }
-+  }
-+  update->Append(keyword);
-+  ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
-+}
-+
-+void GodsEyeHandler::HandleRemoveDomain(const base::Value::List& args) {
-+  AllowJavascript();
-+  const std::string& callback_id = args[0].GetString();
-+  if (args.size() < 2 || !args[1].is_string()) {
-+    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
-+    return;
-+  }
-+  ScopedListPrefUpdate update(pref_service_, prefs::kGodsEyeBlockedDomains);
-+  update->EraseValue(base::Value(args[1].GetString()));
-+  ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
-+}
-+
-+void GodsEyeHandler::HandleRemoveKeyword(const base::Value::List& args) {
-+  AllowJavascript();
-+  const std::string& callback_id = args[0].GetString();
-+  if (args.size() < 2 || !args[1].is_string()) {
-+    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
-+    return;
-+  }
-+  ScopedListPrefUpdate update(pref_service_, prefs::kGodsEyeBlockedKeywords);
-+  update->EraseValue(base::Value(args[1].GetString()));
-+  ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
-+}
---- a/chrome/browser/resources/gods_eye/index.html
-+++ b/chrome/browser/resources/gods_eye/index.html
-@@ -0,0 +1,275 @@
++constexpr char kIndexHtml[] = R"GODS_EYE_HTML(
 +<!DOCTYPE html>
 +<html lang="en">
 +<head>
@@ -619,3 +382,258 @@
 +</script>
 +</body>
 +</html>
++)GODS_EYE_HTML";
++
++bool ShouldHandleRequest(const std::string& path) {
++  return true;
++}
++
++void HandleRequest(const std::string& path,
++                   content::WebUIDataSource::GotDataCallback callback) {
++  std::move(callback).Run(
++      base::MakeRefCounted<base::RefCountedString>(std::string(kIndexHtml)));
++}
++
++}  // namespace
++
++HeliumGodsEyePage::HeliumGodsEyePage(content::WebUI* web_ui)
++    : WebUIController(web_ui) {
++  content::BrowserContext* browser_context =
++      web_ui->GetWebContents()->GetBrowserContext();
++  Profile* profile = Profile::FromBrowserContext(browser_context);
++  content::WebUIDataSource* source =
++      content::WebUIDataSource::CreateAndAdd(
++          profile, chrome::kHeliumGodsEyeHost);
++
++  source->SetRequestFilter(
++      base::BindRepeating(&ShouldHandleRequest),
++      base::BindRepeating(&HandleRequest));
++
++  source->DisableTrustedTypesCSP();
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::ScriptSrc,
++      "script-src 'self' 'unsafe-inline';");
++  source->OverrideContentSecurityPolicy(
++      network::mojom::CSPDirectiveName::ConnectSrc,
++      "connect-src 'self' https://timeapi.io;");
++
++  web_ui->AddMessageHandler(
++      std::make_unique<GodsEyeHandler>(browser_context));
++}
++
++HeliumGodsEyePage::~HeliumGodsEyePage() = default;
+--- a/chrome/browser/ui/webui/gods_eye/gods_eye_handler.h
++++ b/chrome/browser/ui/webui/gods_eye/gods_eye_handler.h
+@@ -0,0 +1,36 @@
++// Copyright 2025 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_WEBUI_GODS_EYE_GODS_EYE_HANDLER_H_
++#define CHROME_BROWSER_UI_WEBUI_GODS_EYE_GODS_EYE_HANDLER_H_
++
++#include "base/memory/raw_ptr.h"
++#include "base/values.h"
++#include "components/prefs/pref_service.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/web_ui_message_handler.h"
++
++class GodsEyeHandler : public content::WebUIMessageHandler {
++ public:
++  explicit GodsEyeHandler(content::BrowserContext* browser_context);
++  ~GodsEyeHandler() override;
++
++  GodsEyeHandler(const GodsEyeHandler&) = delete;
++  GodsEyeHandler& operator=(const GodsEyeHandler&) = delete;
++
++  void RegisterMessages() override;
++
++ private:
++  void HandleGetGodsEyeData(const base::ListValue& args);
++  void HandleSaveGodsEyeData(const base::ListValue& args);
++  void HandleAddDomain(const base::ListValue& args);
++  void HandleAddKeyword(const base::ListValue& args);
++  void HandleRemoveDomain(const base::ListValue& args);
++  void HandleRemoveKeyword(const base::ListValue& args);
++
++  raw_ptr<content::BrowserContext> browser_context_;
++  raw_ptr<PrefService> pref_service_;
++};
++
++#endif  // CHROME_BROWSER_UI_WEBUI_GODS_EYE_GODS_EYE_HANDLER_H_
+--- a/chrome/browser/ui/webui/gods_eye/gods_eye_handler.cc
++++ b/chrome/browser/ui/webui/gods_eye/gods_eye_handler.cc
+@@ -0,0 +1,173 @@
++// Copyright 2025 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/ui/webui/gods_eye/gods_eye_handler.h"
++
++#include "base/functional/bind.h"
++#include "base/time/time.h"
++#include "base/values.h"
++#include "chrome/browser/profiles/profile.h"
++#include "components/helium_services/gods_eye_pref_names.h"
++#include "components/prefs/pref_service.h"
++#include "components/prefs/scoped_user_pref_update.h"
++#include "content/public/browser/web_ui.h"
++
++GodsEyeHandler::GodsEyeHandler(content::BrowserContext* browser_context)
++    : browser_context_(browser_context),
++      pref_service_(
++          Profile::FromBrowserContext(browser_context)->GetPrefs()) {}
++
++GodsEyeHandler::~GodsEyeHandler() = default;
++
++void GodsEyeHandler::RegisterMessages() {
++  web_ui()->RegisterMessageCallback(
++      "getGodsEyeData",
++      base::BindRepeating(&GodsEyeHandler::HandleGetGodsEyeData,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "saveGodsEyeData",
++      base::BindRepeating(&GodsEyeHandler::HandleSaveGodsEyeData,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "addDomain",
++      base::BindRepeating(&GodsEyeHandler::HandleAddDomain,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "addKeyword",
++      base::BindRepeating(&GodsEyeHandler::HandleAddKeyword,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "removeDomain",
++      base::BindRepeating(&GodsEyeHandler::HandleRemoveDomain,
++                          base::Unretained(this)));
++  web_ui()->RegisterMessageCallback(
++      "removeKeyword",
++      base::BindRepeating(&GodsEyeHandler::HandleRemoveKeyword,
++                          base::Unretained(this)));
++}
++
++void GodsEyeHandler::HandleGetGodsEyeData(const base::ListValue& args) {
++  AllowJavascript();
++  const std::string& callback_id = args[0].GetString();
++
++  const base::ListValue& domains =
++      pref_service_->GetList(prefs::kGodsEyeBlockedDomains);
++  const base::ListValue& keywords =
++      pref_service_->GetList(prefs::kGodsEyeBlockedKeywords);
++  double expiry = pref_service_->GetDouble(prefs::kGodsEyeExpiryTimestamp);
++  bool active = pref_service_->GetBoolean(prefs::kGodsEyeActive);
++
++  if (active && expiry > 0.0) {
++    double now = base::Time::Now().InSecondsFSinceUnixEpoch();
++    if (now >= expiry) {
++      pref_service_->SetBoolean(prefs::kGodsEyeActive, false);
++      active = false;
++    }
++  }
++
++  base::DictValue result;
++  result.Set("domains", domains.Clone());
++  result.Set("keywords", keywords.Clone());
++  result.Set("expiryTimestamp", expiry);
++  result.Set("active", active);
++
++  ResolveJavascriptCallback(base::Value(callback_id),
++                             base::Value(std::move(result)));
++}
++
++void GodsEyeHandler::HandleSaveGodsEyeData(const base::ListValue& args) {
++  AllowJavascript();
++  const std::string& callback_id = args[0].GetString();
++
++  if (args.size() < 4) {
++    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
++    return;
++  }
++
++  const base::ListValue* domains = args[1].GetIfList();
++  const base::ListValue* keywords = args[2].GetIfList();
++  double expiry = args[3].GetDouble();
++
++  if (!domains || !keywords || expiry <= 0.0) {
++    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
++    return;
++  }
++
++  pref_service_->SetList(prefs::kGodsEyeBlockedDomains, domains->Clone());
++  pref_service_->SetList(prefs::kGodsEyeBlockedKeywords, keywords->Clone());
++  pref_service_->SetDouble(prefs::kGodsEyeExpiryTimestamp, expiry);
++  pref_service_->SetBoolean(prefs::kGodsEyeActive, true);
++
++  ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
++}
++
++void GodsEyeHandler::HandleAddDomain(const base::ListValue& args) {
++  AllowJavascript();
++  const std::string& callback_id = args[0].GetString();
++  if (args.size() < 2 || !args[1].is_string()) {
++    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
++    return;
++  }
++  const std::string& domain = args[1].GetString();
++  if (domain.empty()) {
++    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
++    return;
++  }
++  ScopedListPrefUpdate update(pref_service_, prefs::kGodsEyeBlockedDomains);
++  for (const auto& entry : *update) {
++    if (entry.is_string() && entry.GetString() == domain) {
++      ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
++      return;
++    }
++  }
++  update->Append(domain);
++  ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
++}
++
++void GodsEyeHandler::HandleAddKeyword(const base::ListValue& args) {
++  AllowJavascript();
++  const std::string& callback_id = args[0].GetString();
++  if (args.size() < 2 || !args[1].is_string()) {
++    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
++    return;
++  }
++  const std::string& keyword = args[1].GetString();
++  if (keyword.empty()) {
++    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
++    return;
++  }
++  ScopedListPrefUpdate update(pref_service_, prefs::kGodsEyeBlockedKeywords);
++  for (const auto& entry : *update) {
++    if (entry.is_string() && entry.GetString() == keyword) {
++      ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
++      return;
++    }
++  }
++  update->Append(keyword);
++  ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
++}
++
++void GodsEyeHandler::HandleRemoveDomain(const base::ListValue& args) {
++  AllowJavascript();
++  const std::string& callback_id = args[0].GetString();
++  if (args.size() < 2 || !args[1].is_string()) {
++    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
++    return;
++  }
++  ScopedListPrefUpdate update(pref_service_, prefs::kGodsEyeBlockedDomains);
++  update->EraseValue(base::Value(args[1].GetString()));
++  ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
++}
++
++void GodsEyeHandler::HandleRemoveKeyword(const base::ListValue& args) {
++  AllowJavascript();
++  const std::string& callback_id = args[0].GetString();
++  if (args.size() < 2 || !args[1].is_string()) {
++    ResolveJavascriptCallback(base::Value(callback_id), base::Value(false));
++    return;
++  }
++  ScopedListPrefUpdate update(pref_service_, prefs::kGodsEyeBlockedKeywords);
++  update->EraseValue(base::Value(args[1].GetString()));
++  ResolveJavascriptCallback(base::Value(callback_id), base::Value(true));
++}

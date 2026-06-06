@@ -103,7 +103,7 @@
 +
 +namespace {
 +
-+constexpr char kIndexHtml[] = R"RESTRICTED_PAGE_HTML(
++constexpr char kIndexHtml[] = R"RESTRICTED_HTML(
 +<!DOCTYPE html>
 +<html lang="en">
 +<head>
@@ -228,7 +228,7 @@
 +</script>
 +</body>
 +</html>
-+)RESTRICTED_PAGE_HTML";
++)RESTRICTED_HTML";
 +
 +bool ShouldHandleRequest(const std::string& path) {
 +  return true;

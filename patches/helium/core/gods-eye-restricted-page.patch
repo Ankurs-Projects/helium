@@ -84,7 +84,7 @@
 +#endif  // CHROME_BROWSER_UI_WEBUI_GODS_EYE_RESTRICTED_PAGE_UI_H_
 --- a/chrome/browser/ui/webui/gods_eye/restricted_page_ui.cc
 +++ b/chrome/browser/ui/webui/gods_eye/restricted_page_ui.cc
-@@ -0,0 +1,180 @@
+@@ -0,0 +1,242 @@
 +// Copyright 2025 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -110,6 +110,7 @@
 +  <meta charset="UTF-8">
 +  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 +  <title>Restricted</title>
++  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23c0392b'><path d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.41 0 8 3.59 8 8 0 1.85-.63 3.55-1.69 4.9z'/></svg>">
 +  <style>
 +    :root {
 +      --helium-blue: #3450d1;
@@ -131,7 +132,7 @@
 +    body {
 +      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 +      background: var(--bg); color: var(--text); min-height: 100vh;
-+      display: flex; align-items: center; justify-content: center; padding: 24px;
++      display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px;
 +    }
 +    .card {
 +      background: var(--surface); border: 1px solid var(--border);
@@ -160,6 +161,21 @@
 +      border: none; font-size: 14px; cursor: pointer; font-weight: 500;
 +      text-decoration: none;
 +    }
++    #debug-panel {
++      max-width: 520px; width: 100%; margin-top: 24px;
++      border-top: 1px solid var(--border); padding-top: 12px;
++    }
++    #debug-toggle {
++      background: none; border: 1px solid var(--border); padding: 4px 10px;
++      font-size: 11px; color: var(--text-muted); border-radius: 4px; cursor: pointer;
++    }
++    #debug-log {
++      display: none; margin-top: 8px; padding: 10px;
++      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
++      font-size: 10px; font-family: Menlo, Monaco, monospace; color: var(--text);
++      max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-all;
++      text-align: left;
++    }
 +  </style>
 +</head>
 +<body>
@@ -176,9 +192,42 @@
 +  <div class="countdown" id="countdown">Loading...</div>
 +  <a href="chrome://godseye" class="btn">Open God's Eye Settings</a>
 +</div>
++<div id="debug-panel">
++  <button type="button" id="debug-toggle" onclick="toggleDebug()">Show debug log</button>
++  <pre id="debug-log"></pre>
++</div>
 +<script>
++'use strict';
++
++function dbgLog(level, msg) {
++  try {
++    var el = document.getElementById('debug-log');
++    if (!el) return;
++    var ts = new Date().toISOString().substr(11, 12);
++    el.textContent += '[' + ts + '][' + level + '] ' + msg + '\n';
++    el.scrollTop = el.scrollHeight;
++  } catch (_) {}
++}
++function toggleDebug() {
++  var el = document.getElementById('debug-log');
++  var btn = document.getElementById('debug-toggle');
++  if (el.style.display === 'none' || !el.style.display) {
++    el.style.display = 'block';
++    btn.textContent = 'Hide debug log';
++  } else {
++    el.style.display = 'none';
++    btn.textContent = 'Show debug log';
++  }
++}
++window.addEventListener('error', function(e) {
++  dbgLog('ERROR', (e.message || e) + ' at ' + (e.filename || '?') + ':' + (e.lineno || '?'));
++});
++window.addEventListener('unhandledrejection', function(e) {
++  var r = e.reason;
++  dbgLog('REJECT', String(r && (r.stack || r.message || r) || e));
++});
++
 +(function() {
-+  'use strict';
 +  var QUOTES = [
 +    "The secret of getting ahead is getting started.",
 +    "It always seems impossible until it's done. -- Nelson Mandela",
@@ -191,38 +240,51 @@
 +    "Small daily improvements are the key to staggering long-term results.",
 +    "Don't watch the clock; do what it does. Keep going. -- Sam Levenson"
 +  ];
-+  document.getElementById('quote-text').textContent =
-+    QUOTES[Math.floor(Math.random() * QUOTES.length)];
-+  var params = new URLSearchParams(window.location.search);
-+  var reason = params.get('reason') || 'domain';
-+  var value = params.get('value') || '';
-+  var expiry = parseFloat(params.get('expiry') || '0');
-+  document.getElementById('blocked-label').textContent =
-+    reason === 'keyword' ? 'Restricted keyword detected:' : 'Restricted domain detected:';
-+  document.getElementById('blocked-value').textContent = value || '(unknown)';
-+  fetch('https://timeapi.io/api/time/current/zone?timeZone=UTC')
-+    .then(function(r) { return r.json(); })
-+    .then(function(d) {
-+      var now = Math.floor(new Date(d.dateTime + 'Z').getTime() / 1000);
-+      showCountdown(now);
-+    })
-+    .catch(function() { showCountdown(Math.floor(Date.now() / 1000)); });
-+  function showCountdown(now) {
-+    var el = document.getElementById('countdown');
-+    if (!expiry || expiry <= 0) { el.textContent = 'Restrictions are active.'; return; }
-+    var diff = expiry - now;
-+    if (diff <= 0) {
-+      el.innerHTML = 'Restrictions have <strong>expired</strong>. You may now update God\'s Eye.';
-+      return;
++  try {
++    document.getElementById('quote-text').textContent =
++      QUOTES[Math.floor(Math.random() * QUOTES.length)];
++    var params = new URLSearchParams(window.location.search);
++    var reason = params.get('reason') || 'domain';
++    var value = params.get('value') || '';
++    var expiry = parseFloat(params.get('expiry') || '0');
++    dbgLog('init', 'reason=' + reason + ' value=' + value + ' expiry=' + expiry);
++    var labelMap = {
++      'keyword':     'Restricted keyword detected:',
++      'dom-keyword': 'Restricted keyword detected on page:',
++      'domain':      'Restricted domain detected:'
++    };
++    document.getElementById('blocked-label').textContent =
++      labelMap[reason] || 'Restricted:';
++    document.getElementById('blocked-value').textContent = value || '(unknown)';
++    fetch('https://timeapi.io/api/time/current/zone?timeZone=UTC')
++      .then(function(r) { return r.json(); })
++      .then(function(d) {
++        var now = Math.floor(new Date(d.dateTime + 'Z').getTime() / 1000);
++        showCountdown(now);
++      })
++      .catch(function(e) {
++        dbgLog('TIMEAPI_FAIL', String(e && e.message || e));
++        showCountdown(Math.floor(Date.now() / 1000));
++      });
++    function showCountdown(now) {
++      var el = document.getElementById('countdown');
++      if (!expiry || expiry <= 0) { el.textContent = 'Restrictions are active.'; return; }
++      var diff = expiry - now;
++      if (diff <= 0) {
++        el.innerHTML = 'Restrictions have <strong>expired</strong>. You may now update God\'s Eye.';
++        return;
++      }
++      var days = Math.floor(diff / 86400);
++      var hours = Math.floor((diff % 86400) / 3600);
++      var mins = Math.floor((diff % 3600) / 60);
++      var s = '';
++      if (days) s += days + ' day' + (days > 1 ? 's ' : ' ');
++      if (hours) s += hours + ' hr' + (hours > 1 ? 's ' : ' ');
++      if (mins || (!days && !hours)) s += mins + ' min';
++      el.innerHTML = 'Time remaining: <strong>' + s.trim() + '</strong>';
 +    }
-+    var days = Math.floor(diff / 86400);
-+    var hours = Math.floor((diff % 86400) / 3600);
-+    var mins = Math.floor((diff % 3600) / 60);
-+    var s = '';
-+    if (days) s += days + ' day' + (days > 1 ? 's ' : ' ');
-+    if (hours) s += hours + ' hr' + (hours > 1 ? 's ' : ' ');
-+    if (mins || (!days && !hours)) s += mins + ' min';
-+    el.innerHTML = 'Time remaining: <strong>' + s.trim() + '</strong>';
++  } catch (e) {
++    dbgLog('INIT_FAIL', String(e && e.stack || e && e.message || e));
 +  }
 +})();
 +</script>

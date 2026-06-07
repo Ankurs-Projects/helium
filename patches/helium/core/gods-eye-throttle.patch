@@ -1,12 +1,14 @@
 --- a/chrome/browser/gods_eye/BUILD.gn
 +++ b/chrome/browser/gods_eye/BUILD.gn
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,22 @@
 +# Copyright 2025 The Helium Authors
 +# You can use, redistribute, and/or modify this source code under
 +# the terms of the GPL-3.0 license that can be found in the LICENSE file.
 +
 +source_set("gods_eye") {
 +  sources = [
++    "gods_eye_dom_observer.cc",
++    "gods_eye_dom_observer.h",
 +    "gods_eye_navigation_throttle.cc",
 +    "gods_eye_navigation_throttle.h",
 +  ]
@@ -15,8 +17,9 @@
 +    "//chrome/browser/profiles:profile",
 +    "//chrome/common",
 +    "//components/helium_services:helium_services",
-+    "//components/prefs",
 +    "//content/public/browser",
++    "//content/public/common",
++    "//components/prefs",
 +    "//url",
 +  ]
 +}
@@ -30,6 +33,258 @@
      "//chrome/browser/gpu",
      "//chrome/browser/gpu:impl",
      "//chrome/browser/hang_monitor",
+--- a/chrome/browser/gods_eye/gods_eye_dom_observer.h
++++ b/chrome/browser/gods_eye/gods_eye_dom_observer.h
+@@ -0,0 +1,54 @@
++// Copyright 2025 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_GODS_EYE_GODS_EYE_DOM_OBSERVER_H_
++#define CHROME_BROWSER_GODS_EYE_GODS_EYE_DOM_OBSERVER_H_
++
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/values.h"
++#include "components/prefs/pref_service.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "content/public/browser/web_contents_user_data.h"
++
++class GURL;
++
++namespace content {
++class RenderFrameHost;
++class WebContents;
++}  // namespace content
++
++// Observes a WebContents and, after main-frame loads finish, scans the
++// rendered DOM (body innerText + title + og:title) for any blocked keyword
++// stored in the user's Gods Eye prefs. If a match is found, redirects the tab
++// to chrome://restricted-page with the matched keyword.
++class GodsEyeDomObserver
++    : public content::WebContentsObserver,
++      public content::WebContentsUserData<GodsEyeDomObserver> {
++ public:
++  GodsEyeDomObserver(const GodsEyeDomObserver&) = delete;
++  GodsEyeDomObserver& operator=(const GodsEyeDomObserver&) = delete;
++  ~GodsEyeDomObserver() override;
++
++  // content::WebContentsObserver:
++  void DidFinishLoad(content::RenderFrameHost* render_frame_host,
++                     const GURL& validated_url) override;
++
++ private:
++  friend class content::WebContentsUserData<GodsEyeDomObserver>;
++
++  explicit GodsEyeDomObserver(content::WebContents* web_contents);
++
++  // Returns true if the Gods Eye feature is currently active for this profile.
++  bool IsGodsEyeActive(PrefService* prefs) const;
++
++  // Called by the renderer once the injected scan script finishes.
++  void OnScanResult(base::Value result);
++
++  base::WeakPtrFactory<GodsEyeDomObserver> weak_factory_{this};
++
++  WEB_CONTENTS_USER_DATA_KEY_DECL();
++};
++
++#endif  // CHROME_BROWSER_GODS_EYE_GODS_EYE_DOM_OBSERVER_H_
+--- a/chrome/browser/gods_eye/gods_eye_dom_observer.cc
++++ b/chrome/browser/gods_eye/gods_eye_dom_observer.cc
+@@ -0,0 +1,192 @@
++// Copyright 2025 The Helium Authors
++// You can use, redistribute, and/or modify this source code under
++// the terms of the GPL-3.0 license that can be found in the LICENSE file.
++
++#include "chrome/browser/gods_eye/gods_eye_dom_observer.h"
++
++#include <string>
++
++#include "base/functional/bind.h"
++#include "base/json/string_escape.h"
++#include "base/strings/escape.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_util.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/time/time.h"
++#include "base/values.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/common/webui_url_constants.h"
++#include "components/helium_services/gods_eye_pref_names.h"
++#include "components/prefs/pref_service.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/navigation_controller.h"
++#include "chrome/common/chrome_isolated_world_ids.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/page_transition_types.h"
++#include "url/gurl.h"
++
++namespace {
++
++// Returns true if the URL is one we must not scan/redirect from (our own
++// chrome:// pages, internal schemes, data:, etc.).
++bool IsExcludedURL(const GURL& url) {
++  if (!url.is_valid()) {
++    return true;
++  }
++  // Only scan real web content. http(s) only.
++  if (!url.SchemeIsHTTPOrHTTPS()) {
++    return true;
++  }
++  // Defense-in-depth (these are already filtered out by the scheme check above
++  // since chrome:// is not http(s), but kept explicit for clarity):
++  if (url.SchemeIs("chrome") || url.SchemeIs("helium")) {
++    if (url.host() == chrome::kHeliumGodsEyeHost ||
++        url.host() == chrome::kHeliumRestrictedPageHost) {
++      return true;
++    }
++  }
++  return false;
++}
++
++}  // namespace
++
++GodsEyeDomObserver::GodsEyeDomObserver(content::WebContents* web_contents)
++    : content::WebContentsObserver(web_contents),
++      content::WebContentsUserData<GodsEyeDomObserver>(*web_contents) {}
++
++GodsEyeDomObserver::~GodsEyeDomObserver() = default;
++
++bool GodsEyeDomObserver::IsGodsEyeActive(PrefService* prefs) const {
++  if (!prefs || !prefs->GetBoolean(prefs::kGodsEyeActive)) {
++    return false;
++  }
++  double expiry = prefs->GetDouble(prefs::kGodsEyeExpiryTimestamp);
++  if (expiry <= 0.0) {
++    return false;
++  }
++  double now = base::Time::Now().InSecondsFSinceUnixEpoch();
++  if (now >= expiry) {
++    prefs->SetBoolean(prefs::kGodsEyeActive, false);
++    return false;
++  }
++  return true;
++}
++
++void GodsEyeDomObserver::DidFinishLoad(
++    content::RenderFrameHost* render_frame_host,
++    const GURL& validated_url) {
++  // Only scan the primary main frame; ignore subframes/iframes.
++  if (!render_frame_host ||
++      render_frame_host != web_contents()->GetPrimaryMainFrame()) {
++    return;
++  }
++
++  // Skip non-web pages and our own chrome:// pages.
++  if (IsExcludedURL(validated_url)) {
++    return;
++  }
++
++  // Off-the-record / system profiles: do nothing.
++  Profile* profile = Profile::FromBrowserContext(
++      web_contents()->GetBrowserContext());
++  if (!profile || profile->IsOffTheRecord()) {
++    return;
++  }
++
++  PrefService* prefs = profile->GetPrefs();
++  if (!IsGodsEyeActive(prefs)) {
++    return;
++  }
++
++  const base::ListValue& keywords =
++      prefs->GetList(prefs::kGodsEyeBlockedKeywords);
++  if (keywords.empty()) {
++    return;
++  }
++
++  // Build a JSON-escaped JS array literal of lowercased keywords.
++  std::string js_array = "[";
++  bool first = true;
++  for (const auto& entry : keywords) {
++    if (!entry.is_string()) {
++      continue;
++    }
++    std::string kw = base::ToLowerASCII(entry.GetString());
++    if (kw.empty()) {
++      continue;
++    }
++    std::string quoted;
++    base::EscapeJSONString(kw, /*put_in_quotes=*/true, &quoted);
++    if (!first) {
++      js_array += ",";
++    }
++    js_array += quoted;
++    first = false;
++  }
++  js_array += "]";
++
++  if (first) {  // no valid keywords
++    return;
++  }
++
++  // Inject a small JS snippet that scans body innerText + title + og:title for
++  // any of the keywords. Returns the matched keyword string, or empty string
++  // if none matched.
++  std::string script =
++      "(function(){"
++      "  try {"
++      "    var keywords = " + js_array + ";"
++      "    var body = (document.body && document.body.innerText) || '';"
++      "    var title = document.title || '';"
++      "    var ogEl = document.querySelector('meta[property=\"og:title\"]');"
++      "    var og = (ogEl && ogEl.content) || '';"
++      "    var hay = (body + ' ' + title + ' ' + og).toLowerCase();"
++      "    for (var i = 0; i < keywords.length; i++) {"
++      "      if (hay.indexOf(keywords[i]) !== -1) return keywords[i];"
++      "    }"
++      "    return '';"
++      "  } catch (e) { return ''; }"
++      "})()";
++
++  render_frame_host->ExecuteJavaScriptInIsolatedWorld(
++      base::UTF8ToUTF16(script),
++      base::BindOnce(&GodsEyeDomObserver::OnScanResult,
++                     weak_factory_.GetWeakPtr()),
++      ISOLATED_WORLD_ID_CHROME_INTERNAL);
++}
++
++void GodsEyeDomObserver::OnScanResult(base::Value result) {
++  if (!result.is_string()) {
++    return;
++  }
++  const std::string& matched = result.GetString();
++  if (matched.empty()) {
++    return;
++  }
++
++  // Re-check active state in case it expired between scan dispatch and result.
++  Profile* profile = Profile::FromBrowserContext(
++      web_contents()->GetBrowserContext());
++  if (!profile) {
++    return;
++  }
++  PrefService* prefs = profile->GetPrefs();
++  if (!IsGodsEyeActive(prefs)) {
++    return;
++  }
++
++  double expiry = prefs->GetDouble(prefs::kGodsEyeExpiryTimestamp);
++  std::string redirect_url =
++      std::string(chrome::kHeliumRestrictedPageURL) +
++      "/?reason=dom-keyword&value=" +
++      base::EscapeQueryParamValue(matched, false) +
++      "&expiry=" +
++      base::NumberToString(static_cast<int64_t>(expiry));
++
++  web_contents()->GetController().LoadURL(
++      GURL(redirect_url), content::Referrer(),
++      ui::PAGE_TRANSITION_AUTO_TOPLEVEL, std::string());
++}
++
++WEB_CONTENTS_USER_DATA_KEY_IMPL(GodsEyeDomObserver);
 --- a/chrome/browser/gods_eye/gods_eye_navigation_throttle.h
 +++ b/chrome/browser/gods_eye/gods_eye_navigation_throttle.h
 @@ -0,0 +1,48 @@
@@ -272,3 +527,32 @@
 +
 +  GodsEyeNavigationThrottle::MaybeCreateAndAdd(registry);
  }
+
+--- a/chrome/browser/ui/tab_helpers.cc
++++ b/chrome/browser/ui/tab_helpers.cc
+@@ -35,6 +35,7 @@
+ #include "chrome/browser/finds/core/finds_features.h"
+ #include "chrome/browser/finds/core/finds_tab_helper.h"
+ #include "chrome/browser/finds/finds_service_factory.h"
++#include "chrome/browser/gods_eye/gods_eye_dom_observer.h"
+ #include "chrome/browser/history/history_tab_helper.h"
+ #include "chrome/browser/history/top_sites_factory.h"
+ #include "chrome/browser/history_clusters/history_clusters_tab_helper.h"
+@@ -401,6 +402,7 @@
+       web_contents);
+ #endif
+   ChromeSecurityStateTabHelper::CreateForWebContents(web_contents);
++  GodsEyeDomObserver::CreateForWebContents(web_contents);
+   ChromeTranslateClient::CreateForWebContents(web_contents);
+ #if BUILDFLAG(IS_ANDROID)
+   // Register LanguagePersistedTabDataAndroid for non-incognito tabs to
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -325,6 +325,7 @@
+     "//chrome/browser/glic/actor",
+     "//chrome/browser/glic/fre",
+     "//chrome/browser/glic/public:features",
++    "//chrome/browser/gods_eye",
+     "//chrome/browser/google",
+     "//chrome/browser/gpu",
+     "//chrome/browser/hang_monitor",

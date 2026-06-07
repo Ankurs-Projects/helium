@@ -32,7 +32,7 @@
          </a>
 +        <a role="menuitem" id="godsEye" class="cr-nav-menu-item"
 +            on-click="onGodsEyeClick_">
-+          <cr-icon icon="cr:visibility"></cr-icon>
++          <cr-icon icon="settings:block"></cr-icon>
 +          $i18n{godsEyeTitle}
 +          <cr-ripple></cr-ripple>
 +        </a>

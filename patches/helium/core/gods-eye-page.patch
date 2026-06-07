@@ -86,7 +86,7 @@
 +#endif  // CHROME_BROWSER_UI_WEBUI_GODS_EYE_GODS_EYE_UI_H_
 --- a/chrome/browser/ui/webui/gods_eye/gods_eye_ui.cc
 +++ b/chrome/browser/ui/webui/gods_eye/gods_eye_ui.cc
-@@ -0,0 +1,335 @@
+@@ -0,0 +1,454 @@
 +// Copyright 2025 The Helium Authors
 +// You can use, redistribute, and/or modify this source code under
 +// the terms of the GPL-3.0 license that can be found in the LICENSE file.
@@ -113,6 +113,7 @@
 +  <meta charset="UTF-8">
 +  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 +  <title>God's Eye</title>
++  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%233450d1'><path d='M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6z'/></svg>">
 +  <style>
 +    :root {
 +      --helium-blue: #3450d1;
@@ -206,6 +207,17 @@
 +    .empty-hint { font-size: 13px; color: var(--text-muted); font-style: italic; }
 +    .expiry-display { font-size: 13px; color: var(--text-muted); margin-top: 6px; }
 +    #save-error { color: #c0392b; font-size: 13px; margin-top: 8px; display: none; }
++    #debug-panel { margin-top: 30px; border-top: 1px solid var(--border); padding-top: 15px; }
++    #debug-toggle {
++      background: none; border: 1px solid var(--border); padding: 6px 12px;
++      font-size: 12px; color: var(--text-muted); border-radius: 4px; cursor: pointer;
++    }
++    #debug-log {
++      display: none; margin-top: 10px; padding: 12px;
++      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
++      font-size: 11px; font-family: Menlo, Monaco, monospace; color: var(--text);
++      max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-all;
++    }
 +  </style>
 +</head>
 +<body>
@@ -246,14 +258,89 @@
 +      <button class="btn-add" onclick="addKeyword()">Add</button>
 +    </div>
 +    <div class="time-note" style="margin-top:8px">
-+      If any blocked keyword appears in a URL or search query, the page will be blocked.
++      If any blocked keyword appears in a URL, page DOM text, page title, or
++      og:title, the page will be blocked.
 +    </div>
 +  </div>
 +  <div id="save-error"></div>
 +  <button class="btn-save" id="save-btn" onclick="saveData()">&#128274; Save &amp; Lock</button>
++  <div id="debug-panel">
++    <button type="button" id="debug-toggle" onclick="toggleDebug()">Show debug log</button>
++    <pre id="debug-log"></pre>
++  </div>
 +</div>
 +<script>
 +'use strict';
++
++// ===== Debug log helpers =====
++function dbgLog(level, msg) {
++  try {
++    var el = document.getElementById('debug-log');
++    if (!el) return;
++    var ts = new Date().toISOString().substr(11, 12);
++    el.textContent += '[' + ts + '][' + level + '] ' + msg + '\n';
++    el.scrollTop = el.scrollHeight;
++  } catch (_) {}
++}
++function toggleDebug() {
++  var el = document.getElementById('debug-log');
++  var btn = document.getElementById('debug-toggle');
++  if (el.style.display === 'none' || !el.style.display) {
++    el.style.display = 'block';
++    btn.textContent = 'Hide debug log';
++  } else {
++    el.style.display = 'none';
++    btn.textContent = 'Show debug log';
++  }
++}
++window.addEventListener('error', function(e) {
++  dbgLog('ERROR', (e.message || e) + ' at ' + (e.filename || '?') + ':' + (e.lineno || '?'));
++});
++window.addEventListener('unhandledrejection', function(e) {
++  var r = e.reason;
++  dbgLog('REJECT', String(r && (r.stack || r.message || r) || e));
++});
++(function() {
++  var orig = { error: console.error, warn: console.warn, log: console.log };
++  console.error = function() { dbgLog('error', Array.prototype.join.call(arguments, ' ')); orig.error.apply(console, arguments); };
++  console.warn  = function() { dbgLog('warn',  Array.prototype.join.call(arguments, ' ')); orig.warn.apply(console, arguments); };
++  console.log   = function() { dbgLog('log',   Array.prototype.join.call(arguments, ' ')); orig.log.apply(console, arguments); };
++})();
++
++// ===== cr.sendWithPromise shim =====
++// This page is served via a custom WebUIDataSource (not build_webui), so the
++// chrome://resources/js/cr.js module is not imported. We reimplement the small
++// public surface here so existing C++ ResolveJavascriptCallback (which calls
++// "cr.webUIResponse") and our handler.RegisterMessageCallback flow works.
++window.cr = {
++  _resolvers: {},
++  _uid: 1,
++  sendWithPromise: function(method) {
++    var args = Array.prototype.slice.call(arguments, 1);
++    var id = method + '_' + (this._uid++);
++    var self = this;
++    return new Promise(function(resolve, reject) {
++      self._resolvers[id] = { resolve: resolve, reject: reject };
++      try {
++        chrome.send(method, [id].concat(args));
++      } catch (e) {
++        delete self._resolvers[id];
++        dbgLog('SEND_ERR', method + ': ' + (e && e.message || e));
++        reject(e);
++      }
++    });
++  },
++  webUIResponse: function(id, isSuccess, response) {
++    var r = this._resolvers[id];
++    if (!r) {
++      dbgLog('WUI_MISS', id);
++      return;
++    }
++    delete this._resolvers[id];
++    if (isSuccess) r.resolve(response); else r.reject(response);
++  }
++};
++
 +var TIME_API = 'https://timeapi.io/api/time/current/zone?timeZone=UTC';
 +var state = { domains: [], keywords: [], expiryTimestamp: 0, active: false, nowUtc: 0 };
 +
@@ -269,7 +356,10 @@
 +    var r = await fetch(TIME_API);
 +    var d = await r.json();
 +    return Math.floor(new Date(d.dateTime + 'Z').getTime() / 1000);
-+  } catch(e) { return Math.floor(Date.now() / 1000); }
++  } catch(e) {
++    dbgLog('TIMEAPI_FAIL', String(e && e.message || e));
++    return Math.floor(Date.now() / 1000);
++  }
 +}
 +function renderTags(listId, items, removeFn) {
 +  var el = document.getElementById(listId);
@@ -315,64 +405,93 @@
 +  }
 +}
 +async function init() {
-+  state.nowUtc = await fetchUtc();
-+  document.getElementById('utc-time-display').textContent = 'Current UTC time: ' + fmt(state.nowUtc);
-+  var data = await cr.sendWithPromise('getGodsEyeData');
-+  state.domains = data.domains || [];
-+  state.keywords = data.keywords || [];
-+  state.expiryTimestamp = data.expiryTimestamp || 0;
-+  state.active = data.active || false;
-+  if (state.active && state.expiryTimestamp > 0 && state.nowUtc >= state.expiryTimestamp) {
-+    state.active = false; state.expiryTimestamp = 0;
-+  }
-+  renderTags('domains-list', state.domains, removeDomain);
-+  renderTags('keywords-list', state.keywords, removeKeyword);
-+  renderStatus();
-+}
-+function addDomain() {
-+  var v = document.getElementById('domain-input').value.trim().toLowerCase()
-+    .replace(/^https?:\/\//, '').replace(/\/$/, '');
-+  if (!v) return;
-+  if (state.active) {
-+    cr.sendWithPromise('addDomain', v).then(function(ok) {
-+      if (ok) { state.domains.push(v); renderTags('domains-list', state.domains, removeDomain); }
-+    });
-+  } else {
-+    if (!state.domains.includes(v)) state.domains.push(v);
-+    renderTags('domains-list', state.domains, removeDomain);
-+  }
-+  document.getElementById('domain-input').value = '';
-+}
-+function addKeyword() {
-+  var v = document.getElementById('keyword-input').value.trim().toLowerCase();
-+  if (!v) return;
-+  if (state.active) {
-+    cr.sendWithPromise('addKeyword', v).then(function(ok) {
-+      if (ok) { state.keywords.push(v); renderTags('keywords-list', state.keywords, removeKeyword); }
-+    });
-+  } else {
-+    if (!state.keywords.includes(v)) state.keywords.push(v);
-+    renderTags('keywords-list', state.keywords, removeKeyword);
-+  }
-+  document.getElementById('keyword-input').value = '';
-+}
-+function removeDomain(v) { if (state.active) return; state.domains = state.domains.filter(function(d) { return d !== v; }); renderTags('domains-list', state.domains, removeDomain); }
-+function removeKeyword(v) { if (state.active) return; state.keywords = state.keywords.filter(function(k) { return k !== v; }); renderTags('keywords-list', state.keywords, removeKeyword); }
-+async function saveData() {
-+  if (state.active) return;
-+  var err = document.getElementById('save-error');
-+  err.style.display = 'none';
-+  var inp = document.getElementById('expiry-input');
-+  if (!inp.value) { err.textContent = 'Please set an expiry date and time.'; err.style.display = 'block'; return; }
-+  var ts = Math.floor(new Date(inp.value).getTime() / 1000);
-+  if (ts <= state.nowUtc) { err.textContent = 'Expiry must be in the future.'; err.style.display = 'block'; return; }
-+  var ok = await cr.sendWithPromise('saveGodsEyeData', state.domains, state.keywords, ts);
-+  if (ok) {
-+    state.expiryTimestamp = ts; state.active = true;
++  try {
++    state.nowUtc = await fetchUtc();
++    document.getElementById('utc-time-display').textContent = 'Current UTC time: ' + fmt(state.nowUtc);
++    dbgLog('init', 'utc=' + state.nowUtc + ' calling getGodsEyeData');
++    var data = await cr.sendWithPromise('getGodsEyeData');
++    dbgLog('init', 'got data: ' + JSON.stringify(data));
++    state.domains = data.domains || [];
++    state.keywords = data.keywords || [];
++    state.expiryTimestamp = data.expiryTimestamp || 0;
++    state.active = data.active || false;
++    if (state.active && state.expiryTimestamp > 0 && state.nowUtc >= state.expiryTimestamp) {
++      state.active = false; state.expiryTimestamp = 0;
++    }
 +    renderTags('domains-list', state.domains, removeDomain);
 +    renderTags('keywords-list', state.keywords, removeKeyword);
 +    renderStatus();
-+  } else { err.textContent = 'Failed to save. Please try again.'; err.style.display = 'block'; }
++  } catch (e) {
++    dbgLog('INIT_FAIL', String(e && e.stack || e && e.message || e));
++  }
++}
++async function addDomain() {
++  try {
++    var v = document.getElementById('domain-input').value.trim().toLowerCase()
++      .replace(/^https?:\/\//, '').replace(/\/$/, '');
++    if (!v) return;
++    if (state.active) {
++      var ok = await cr.sendWithPromise('addDomain', v);
++      if (ok) { state.domains.push(v); renderTags('domains-list', state.domains, removeDomain); }
++    } else {
++      if (!state.domains.includes(v)) state.domains.push(v);
++      renderTags('domains-list', state.domains, removeDomain);
++    }
++    document.getElementById('domain-input').value = '';
++  } catch (e) {
++    dbgLog('ADD_DOMAIN_FAIL', String(e && e.stack || e && e.message || e));
++  }
++}
++async function addKeyword() {
++  try {
++    var v = document.getElementById('keyword-input').value.trim().toLowerCase();
++    if (!v) return;
++    if (state.active) {
++      var ok = await cr.sendWithPromise('addKeyword', v);
++      if (ok) { state.keywords.push(v); renderTags('keywords-list', state.keywords, removeKeyword); }
++    } else {
++      if (!state.keywords.includes(v)) state.keywords.push(v);
++      renderTags('keywords-list', state.keywords, removeKeyword);
++    }
++    document.getElementById('keyword-input').value = '';
++  } catch (e) {
++    dbgLog('ADD_KEYWORD_FAIL', String(e && e.stack || e && e.message || e));
++  }
++}
++function removeDomain(v) {
++  if (state.active) return;
++  state.domains = state.domains.filter(function(d) { return d !== v; });
++  renderTags('domains-list', state.domains, removeDomain);
++}
++function removeKeyword(v) {
++  if (state.active) return;
++  state.keywords = state.keywords.filter(function(k) { return k !== v; });
++  renderTags('keywords-list', state.keywords, removeKeyword);
++}
++async function saveData() {
++  try {
++    if (state.active) return;
++    var err = document.getElementById('save-error');
++    err.style.display = 'none';
++    var inp = document.getElementById('expiry-input');
++    if (!inp.value) { err.textContent = 'Please set an expiry date and time.'; err.style.display = 'block'; return; }
++    var ts = Math.floor(new Date(inp.value).getTime() / 1000);
++    if (ts <= state.nowUtc) { err.textContent = 'Expiry must be in the future.'; err.style.display = 'block'; return; }
++    dbgLog('save', 'sending saveGodsEyeData ts=' + ts + ' domains=' + state.domains.length + ' keywords=' + state.keywords.length);
++    var ok = await cr.sendWithPromise('saveGodsEyeData', state.domains, state.keywords, ts);
++    dbgLog('save', 'response: ' + ok);
++    if (ok) {
++      state.expiryTimestamp = ts; state.active = true;
++      renderTags('domains-list', state.domains, removeDomain);
++      renderTags('keywords-list', state.keywords, removeKeyword);
++      renderStatus();
++    } else { err.textContent = 'Failed to save. Please try again.'; err.style.display = 'block'; }
++  } catch (e) {
++    dbgLog('SAVE_FAIL', String(e && e.stack || e && e.message || e));
++    var err = document.getElementById('save-error');
++    err.textContent = 'Save failed (see debug log below for details).';
++    err.style.display = 'block';
++  }
 +}
 +document.addEventListener('DOMContentLoaded', function() {
 +  document.getElementById('domain-input').addEventListener('keydown', function(e) { if (e.key === 'Enter') addDomain(); });

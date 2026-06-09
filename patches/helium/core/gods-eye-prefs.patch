@@ -59,7 +59,7 @@
  #include "chrome/browser/glic/glic_pref_names.h"
  #include "chrome/browser/glic/suggestions/contextual_cueing_prefs.h"
  #include "chrome/browser/gpu/gpu_mode_manager.h"
-@@ -1679,6 +1681,14 @@
+@@ -1668,6 +1670,14 @@
        policy::policy_prefs::kLocalNetworkAccessPermissionsPolicyDefaultEnabled,
        false);
  
